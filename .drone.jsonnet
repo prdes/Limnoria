@@ -1,24 +1,58 @@
+local volumes() = [
+    {
+        "name": "python_install",
+        "path": "/usr/local/"
+    }
+];
 local limnoria_build(image_tag, use_opt_deps) = {
     kind: "pipeline",
     type: "docker",
     name: std.strReplace(image_tag, ":", "") + if use_opt_deps then "-withoptdeps" else "-nooptdeps",
     steps:
-        [
+        std.prune([
+            if use_opt_deps then {
+                "name": "install-deps",
+                "image": image_tag,
+                "commands": [
+                    "pip install -vr requirements.txt",
+                    "pip install -v git+https://github.com/ProgVal/irctest.git",
+                    "echo y | pip uninstall limnoria || true",
+                ],
+                "volumes": volumes()
+            },
+            {
+                "name": "install",
+                "image": image_tag,
+                "commands": [
+                    "python setup.py install"
+                ],
+                "volumes": volumes()
+            },
             {
                 "name": "test",
                 "image": image_tag,
-                "commands": std.prune([
-                    if use_opt_deps then "pip install -vr requirements.txt",
-                    if use_opt_deps then "pip install -v git+https://github.com/ProgVal/irctest.git",
-                    if use_opt_deps then "echo y | pip uninstall limnoria || true",
-
-                    "python setup.py install",
-
+                "commands": [
                     "supybot-test test -v --plugins-dir=./plugins/ --no-network",
-                    if use_opt_deps then "python -m irctest irctest.controllers.limnoria",
-                ])
+                ],
+                "volumes": volumes()
             },
-        ]
+            if use_opt_deps then {
+                "name": "irctest",
+                "image": image_tag,
+                "commands": [
+                    # Workaround limnoria refusing to run as root by default
+                    "adduser --disabled-password --gecos '' limnoria",
+                    "su limnoria -c 'cd $HOME && python -m irctest irctest.controllers.limnoria'",
+                ],
+                "volumes": volumes()
+            },
+        ]),
+    volumes: [
+        {
+            name: "python_install",
+            temp: {}
+        },
+    ],
 };
 
 [
