@@ -4,7 +4,7 @@ local volumes() = [
         "path": "/usr/local/"
     }
 ];
-local limnoria_build(image_tag, use_opt_deps) = {
+local limnoria_build(image_tag, use_opt_deps, interpreter_name="python", can_fail=false) = {
     kind: "pipeline",
     type: "docker",
     name: std.strReplace(image_tag, ":", "") + if use_opt_deps then "-withoptdeps" else "-nooptdeps",
@@ -24,13 +24,14 @@ local limnoria_build(image_tag, use_opt_deps) = {
                 "name": "install",
                 "image": image_tag,
                 "commands": [
-                    "python setup.py install"
+                    "%s setup.py install" % interpreter_name
                 ],
                 "volumes": volumes()
             },
             {
                 "name": "test",
                 "image": image_tag,
+                "failure": if can_fail then "ignore",
                 "commands": [
                     "supybot-test test -v --plugins-dir=./plugins/ --no-network",
                 ],
@@ -39,10 +40,11 @@ local limnoria_build(image_tag, use_opt_deps) = {
             if use_opt_deps then {
                 "name": "irctest",
                 "image": image_tag,
+                "failure": if can_fail then "ignore",
                 "commands": [
                     # Workaround limnoria refusing to run as root by default
                     "adduser --disabled-password --gecos '' limnoria",
-                    "su limnoria -c 'cd $HOME && python -m irctest irctest.controllers.limnoria'",
+                    "su limnoria -c 'cd $HOME && %s -m irctest irctest.controllers.limnoria'" % interpreter_name,
                 ],
                 "volumes": volumes()
             },
@@ -64,6 +66,6 @@ local limnoria_build(image_tag, use_opt_deps) = {
     limnoria_build("python:3.6", true),
     limnoria_build("python:3.7", true),
     limnoria_build("python:3.8", true),
-    limnoria_build("python:3.9-rc", true),
-    limnoria_build("pypy:3", true),
+    limnoria_build("python:3.9-rc", true, can_fail=true),
+    limnoria_build("pypy:3", true, interpreter_name="pypy3"),
 ]
