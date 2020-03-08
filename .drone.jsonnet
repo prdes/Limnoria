@@ -37,7 +37,8 @@ local limnoria_build(image_tag, use_opt_deps, interpreter_name="python", can_fai
                 ],
                 "volumes": volumes()
             },
-            if use_opt_deps then {
+            # Skip irctest on pypy3 - it seems to hang there
+            if use_opt_deps && interpreter_name == "python" then {
                 "name": "irctest",
                 "image": image_tag,
                 "failure": if can_fail then "ignore",
