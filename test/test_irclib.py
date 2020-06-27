@@ -27,14 +27,15 @@
 # POSSIBILITY OF SUCH DAMAGE.
 ###
 
-from supybot.test import *
-
 import copy
 import pickle
-import warnings
+import unittest.mock
+
+from supybot.test import *
 
 import supybot.conf as conf
 import supybot.irclib as irclib
+import supybot.drivers as drivers
 import supybot.ircmsgs as ircmsgs
 import supybot.ircutils as ircutils
 
@@ -497,6 +498,157 @@ class IrcCapsTestCase(SupyTestCase):
         self.assertEqual(m.args[0], 'REQ', m)
         self.assertEqual(m.args[1], 'b'*400)
 
+    def testNoEchomessageWithoutLabeledresponse(self):
+        self.irc = irclib.Irc('test')
+
+        m = self.irc.takeMsg()
+        self.assertTrue(m.command == 'CAP', 'Expected CAP, got %r.' % m)
+        self.assertTrue(m.args == ('LS', '302'), 'Expected CAP LS 302, got %r.' % m)
+
+        m = self.irc.takeMsg()
+        self.assertTrue(m.command == 'NICK', 'Expected NICK, got %r.' % m)
+
+        m = self.irc.takeMsg()
+        self.assertTrue(m.command == 'USER', 'Expected USER, got %r.' % m)
+
+        self.irc.feedMsg(ircmsgs.IrcMsg(command='CAP',
+            args=('*', 'LS', 'account-notify echo-message')))
+
+        m = self.irc.takeMsg()
+        self.assertTrue(m.command == 'CAP', 'Expected CAP, got %r.' % m)
+        self.assertEqual(m.args[0], 'REQ', m)
+        self.assertEqual(m.args[1], 'account-notify')
+
+        m = self.irc.takeMsg()
+        self.assertIsNone(m)
+
+        self.irc.feedMsg(ircmsgs.IrcMsg(command='CAP',
+            args=('*', 'ACK', 'account-notify')))
+
+        m = self.irc.takeMsg()
+        self.assertTrue(m.command == 'CAP', 'Expected CAP, got %r.' % m)
+        self.assertEqual(m.args, ('END',), m)
+
+    def testEchomessageLabeledresponseGrouped(self):
+        self.irc = irclib.Irc('test')
+
+        m = self.irc.takeMsg()
+        self.assertTrue(m.command == 'CAP', 'Expected CAP, got %r.' % m)
+        self.assertTrue(m.args == ('LS', '302'), 'Expected CAP LS 302, got %r.' % m)
+
+        m = self.irc.takeMsg()
+        self.assertTrue(m.command == 'NICK', 'Expected NICK, got %r.' % m)
+
+        m = self.irc.takeMsg()
+        self.assertTrue(m.command == 'USER', 'Expected USER, got %r.' % m)
+
+        self.irc.REQUEST_CAPABILITIES = set([
+            'account-notify', 'a'*490, 'echo-message', 'labeled-response'])
+        self.irc.feedMsg(ircmsgs.IrcMsg(command='CAP', args=(
+            '*', 'LS',
+            'account-notify ' + 'a'*490 + ' echo-message labeled-response')))
+
+        m = self.irc.takeMsg()
+        self.assertTrue(m.command == 'CAP', 'Expected CAP, got %r.' % m)
+        self.assertEqual(m.args[0], 'REQ', m)
+        self.assertEqual(m.args[1], 'echo-message labeled-response')
+
+        m = self.irc.takeMsg()
+        self.assertTrue(m.command == 'CAP', 'Expected CAP, got %r.' % m)
+        self.assertEqual(m.args[0], 'REQ', m)
+        self.assertEqual(m.args[1], 'a'*490)
+
+        m = self.irc.takeMsg()
+        self.assertTrue(m.command == 'CAP', 'Expected CAP, got %r.' % m)
+        self.assertEqual(m.args[0], 'REQ', m)
+        self.assertEqual(m.args[1], 'account-notify')
+
+        m = self.irc.takeMsg()
+        self.assertIsNone(m)
+
+
+class StsTestCase(SupyTestCase):
+    def setUp(self):
+        self.irc = irclib.Irc('test')
+
+        m = self.irc.takeMsg()
+        self.failUnless(m.command == 'CAP', 'Expected CAP, got %r.' % m)
+        self.failUnless(m.args == ('LS', '302'), 'Expected CAP LS 302, got %r.' % m)
+
+        m = self.irc.takeMsg()
+        self.failUnless(m.command == 'NICK', 'Expected NICK, got %r.' % m)
+
+        m = self.irc.takeMsg()
+        self.failUnless(m.command == 'USER', 'Expected USER, got %r.' % m)
+
+        self.irc.driver = unittest.mock.Mock()
+
+    def tearDown(self):
+        ircdb.networks.networks = {}
+
+    def testStsInSecureConnection(self):
+        self.irc.driver.anyCertValidationEnabled.return_value = True
+        self.irc.driver.ssl = True
+        self.irc.driver.currentServer = drivers.Server('irc.test', 6697, False)
+        self.irc.feedMsg(ircmsgs.IrcMsg(command='CAP',
+            args=('*', 'LS', 'sts=duration=42,port=6697')))
+
+        self.assertEqual(ircdb.networks.getNetwork('test').stsPolicies, {
+            'irc.test': 'duration=42,port=6697'})
+        self.irc.driver.reconnect.assert_not_called()
+
+    def testStsInInsecureTlsConnection(self):
+        self.irc.driver.anyCertValidationEnabled.return_value = False
+        self.irc.driver.ssl = True
+        self.irc.driver.currentServer = drivers.Server('irc.test', 6697, False)
+        self.irc.feedMsg(ircmsgs.IrcMsg(command='CAP',
+            args=('*', 'LS', 'sts=duration=42,port=6697')))
+
+        self.assertEqual(ircdb.networks.getNetwork('test').stsPolicies, {})
+        self.irc.driver.reconnect.assert_called_once_with(
+            server=drivers.Server('irc.test', 6697, True),
+            wait=True)
+
+    def testStsInCleartextConnection(self):
+        self.irc.driver.anyCertValidationEnabled.return_value = False
+        self.irc.driver.ssl = True
+        self.irc.driver.currentServer = drivers.Server('irc.test', 6667, False)
+        self.irc.feedMsg(ircmsgs.IrcMsg(command='CAP',
+            args=('*', 'LS', 'sts=duration=42,port=6697')))
+
+        self.assertEqual(ircdb.networks.getNetwork('test').stsPolicies, {})
+        self.irc.driver.reconnect.assert_called_once_with(
+            server=drivers.Server('irc.test', 6697, True),
+            wait=True)
+
+    def testStsInCleartextConnectionInvalidDuration(self):
+        # "Servers MAY send this key to all clients, but insecurely
+        # connected clients MUST ignore it."
+        self.irc.driver.anyCertValidationEnabled.return_value = False
+        self.irc.driver.ssl = True
+        self.irc.driver.currentServer = drivers.Server('irc.test', 6667, False)
+        self.irc.feedMsg(ircmsgs.IrcMsg(command='CAP',
+            args=('*', 'LS', 'sts=duration=foo,port=6697')))
+
+        self.assertEqual(ircdb.networks.getNetwork('test').stsPolicies, {})
+        self.irc.driver.reconnect.assert_called_once_with(
+            server=drivers.Server('irc.test', 6697, True),
+            wait=True)
+
+    def testStsInCleartextConnectionNoDuration(self):
+        # "Servers MAY send this key to all clients, but insecurely
+        # connected clients MUST ignore it."
+        self.irc.driver.anyCertValidationEnabled.return_value = False
+        self.irc.driver.ssl = True
+        self.irc.driver.currentServer = drivers.Server('irc.test', 6667, False)
+        self.irc.feedMsg(ircmsgs.IrcMsg(command='CAP',
+            args=('*', 'LS', 'sts=port=6697')))
+
+        self.assertEqual(ircdb.networks.getNetwork('test').stsPolicies, {})
+        self.irc.driver.reconnect.assert_called_once_with(
+            server=drivers.Server('irc.test', 6697, True),
+            wait=True)
+
 class IrcTestCase(SupyTestCase):
     def setUp(self):
         self.irc = irclib.Irc('test')
@@ -566,7 +718,18 @@ class IrcTestCase(SupyTestCase):
     def testNoMsgLongerThan512(self):
         self.irc.queueMsg(ircmsgs.privmsg('whocares', 'x'*1000))
         msg = self.irc.takeMsg()
-        self.assertTrue(len(msg) <= 512, 'len(msg) was %s' % len(msg))
+        self.assertEqual(
+            len(msg), 512, 'len(msg) was %s (msg=%r)' % (len(msg), msg))
+
+        # Server tags don't influence the size limit of the rest of the
+        # message.
+        self.irc.queueMsg(ircmsgs.IrcMsg(
+            command='PRIVMSG', args=['whocares', 'x'*1000],
+            server_tags={'y': 'z'*500}))
+        msg2 = self.irc.takeMsg()
+        self.assertEqual(
+            len(msg2), 512+504, 'len(msg2) was %s (msg2=%r)' % (len(msg2), msg2))
+        self.assertEqual(msg.args, msg2.args)
 
     def testReset(self):
         for msg in msgs:
@@ -665,12 +828,13 @@ class IrcTestCase(SupyTestCase):
     def testBatch(self):
         self.irc.reset()
         self.irc.feedMsg(ircmsgs.IrcMsg(':someuser1 JOIN #foo'))
-        self.irc.feedMsg(ircmsgs.IrcMsg(':host BATCH +name netjoin'))
-        m1 = ircmsgs.IrcMsg('@batch=name :someuser2 JOIN #foo')
+        m1 = ircmsgs.IrcMsg(':host BATCH +name netjoin')
         self.irc.feedMsg(m1)
-        self.irc.feedMsg(ircmsgs.IrcMsg(':someuser3 JOIN #foo'))
-        m2 = ircmsgs.IrcMsg('@batch=name :someuser4 JOIN #foo')
+        m2 = ircmsgs.IrcMsg('@batch=name :someuser2 JOIN #foo')
         self.irc.feedMsg(m2)
+        self.irc.feedMsg(ircmsgs.IrcMsg(':someuser3 JOIN #foo'))
+        m3 = ircmsgs.IrcMsg('@batch=name :someuser4 JOIN #foo')
+        self.irc.feedMsg(m3)
         class Callback(irclib.IrcCallback):
             batch = None
             def name(self):
@@ -680,10 +844,11 @@ class IrcTestCase(SupyTestCase):
         c = Callback()
         self.irc.addCallback(c)
         try:
-            self.irc.feedMsg(ircmsgs.IrcMsg(':host BATCH -name'))
+            m4 = ircmsgs.IrcMsg(':host BATCH -name')
+            self.irc.feedMsg(m4)
         finally:
             self.irc.removeCallback(c.name())
-        self.assertEqual(c.batch, irclib.Batch('netjoin', (), [m1, m2]))
+        self.assertEqual(c.batch, irclib.Batch('netjoin', (), [m1, m2, m3, m4]))
 
 class SaslTestCase(SupyTestCase):
     def setUp(self):
@@ -831,6 +996,8 @@ class SaslTestCase(SupyTestCase):
 
         while self.irc.takeMsg():
             pass
+
+        self.irc.feedMsg(ircmsgs.IrcMsg(command='422')) # ERR_NOMOTD
 
         self.irc.feedMsg(ircmsgs.IrcMsg(command='CAP',
                 args=('*', 'NEW', 'sasl=EXTERNAL')))

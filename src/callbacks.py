@@ -40,6 +40,7 @@ from . import shlex
 import codecs
 import getopt
 import inspect
+import warnings
 
 from . import (conf, ircdb, irclib, ircmsgs, ircutils, log, registry,
         utils, world)
@@ -48,13 +49,22 @@ from .utils.iter import any, all
 from .i18n import PluginInternationalization
 _ = PluginInternationalization()
 
-def _addressed(nick, msg, prefixChars=None, nicks=None,
+def _addressed(irc, msg, prefixChars=None, nicks=None,
               prefixStrings=None, whenAddressedByNick=None,
               whenAddressedByNickAtEnd=None):
+    if isinstance(irc, str):
+        warnings.warn(
+            "callbacks.addressed's first argument should now be be the Irc "
+            "object instead of the bot's nick.",
+            DeprecationWarning)
+        network = None
+        nick = irc
+    else:
+        network = irc.network
+        nick = irc.nick
     def get(group):
-        if ircutils.isChannel(target):
-            group = group.get(target)
-        return group()
+        v = group.getSpecific(network=network, channel=msg.channel)
+        return v()
     def stripPrefixStrings(payload):
         for prefixString in prefixStrings:
             if payload.startswith(prefixString):
@@ -62,7 +72,8 @@ def _addressed(nick, msg, prefixChars=None, nicks=None,
         return payload
 
     assert msg.command == 'PRIVMSG'
-    (target, payload) = msg.args
+    target = msg.channel or msg.args[0]
+    payload = msg.args[1]
     if not payload:
         return ''
     if prefixChars is None:
@@ -125,7 +136,7 @@ def _addressed(nick, msg, prefixChars=None, nicks=None,
     else:
         return ''
 
-def addressed(nick, msg, **kwargs):
+def addressed(irc, msg, **kwargs):
     """If msg is addressed to 'name', returns the portion after the address.
     Otherwise returns the empty string.
     """
@@ -133,7 +144,7 @@ def addressed(nick, msg, **kwargs):
     if payload is not None:
         return payload
     else:
-        payload = _addressed(nick, msg, **kwargs)
+        payload = _addressed(irc, msg, **kwargs)
         msg.tag('addressed', payload)
         return payload
 
@@ -225,6 +236,14 @@ def _makeReply(irc, msg, s,
     # Finally, we'll return the actual message.
     ret = msgmaker(target, s)
     ret.tag('inReplyTo', msg)
+    if 'msgid' in msg.server_tags \
+            and conf.supybot.protocols.irc.experimentalExtensions() \
+            and 'message-tags' in irc.state.capabilities_ack:
+        # In theory, msgid being in server_tags implies message-tags was
+        # negotiated, but the +reply spec requires it explicitly. Plus, there's
+        # no harm in doing this extra check, in case a plugin is replying
+        # across network (as it may happen with '@network command').
+        ret.server_tags['+draft/reply'] = msg.server_tags['msgid']
     return ret
 
 def error(*args, **kwargs):
@@ -899,26 +918,27 @@ class NestedCommandsIrcProxy(ReplyIrcProxy):
         self.noLengthCheck=noLengthCheck or self.noLengthCheck or self.action
         if not isinstance(s, minisix.string_types): # avoid trying to str() unicode
             s = str(s) # Allow non-string esses.
+
+        replyArgs = dict(
+            to=self.to,
+            notice=self.notice,
+            action=self.action,
+            private=self.private,
+            prefixNick=self.prefixNick,
+            stripCtcp=stripCtcp
+        )
+
         if self.finalEvaled:
             try:
                 if isinstance(self.irc, self.__class__):
                     s = s[:conf.supybot.reply.maximumLength()]
-                    return self.irc.reply(s, to=self.to,
-                                          notice=self.notice,
-                                          action=self.action,
-                                          private=self.private,
-                                          prefixNick=self.prefixNick,
+                    return self.irc.reply(s,
                                           noLengthCheck=self.noLengthCheck,
-                                          stripCtcp=stripCtcp)
+                                          **replyArgs)
                 elif self.noLengthCheck:
                     # noLengthCheck only matters to NestedCommandsIrcProxy, so
                     # it's not used here.  Just in case you were wondering.
-                    m = _makeReply(self, msg, s, to=self.to,
-                                  notice=self.notice,
-                                  action=self.action,
-                                  private=self.private,
-                                  prefixNick=self.prefixNick,
-                                  stripCtcp=stripCtcp)
+                    m = _makeReply(self, msg, s, **replyArgs)
                     sendMsg(m)
                     return m
                 else:
@@ -950,29 +970,37 @@ class NestedCommandsIrcProxy(ReplyIrcProxy):
                         # action implies noLengthCheck, which has already been
                         # handled.  Let's stick an assert in here just in case.
                         assert not self.action
-                        m = _makeReply(self, msg, s, to=self.to,
-                                      notice=self.notice,
-                                      private=self.private,
-                                      prefixNick=self.prefixNick,
-                                      stripCtcp=stripCtcp)
+                        m = _makeReply(self, msg, s, **replyArgs)
                         sendMsg(m)
                         return m
                     # The '(XX more messages)' may have not the same
                     # length in the current locale
                     allowedLength -= len(_('(XX more messages)')) + 1 # bold
-                    msgs = ircutils.wrap(s, allowedLength)
-                    msgs.reverse()
+                    chunks = ircutils.wrap(s, allowedLength)
+
+                    # Last messages to display at the beginning of the list
+                    # (which is used like a stack)
+                    chunks.reverse()
+
+                    msgs = []
+                    for (i, chunk) in enumerate(chunks):
+                        if i == 0:
+                            pass # last message, no suffix to add
+                        else:
+                            if i == 1:
+                                more = _('more message')
+                            else:
+                                more = _('more messages')
+                            n = ircutils.bold('(%i %s)' % (len(msgs), more))
+                            chunk = '%s %s' % (chunk, n)
+                        msgs.append(_makeReply(self, msg, chunk, **replyArgs))
+
                     instant = conf.get(conf.supybot.reply.mores.instant,
                         channel=target, network=self.irc.network)
                     while instant > 1 and msgs:
                         instant -= 1
                         response = msgs.pop()
-                        m = _makeReply(self, msg, response, to=self.to,
-                                      notice=self.notice,
-                                      private=self.private,
-                                      prefixNick=self.prefixNick,
-                                      stripCtcp=stripCtcp)
-                        sendMsg(m)
+                        sendMsg(response)
                         # XXX We should somehow allow these to be returned, but
                         #     until someone complains, we'll be fine :)  We
                         #     can't return from here, though, for obvious
@@ -981,13 +1009,6 @@ class NestedCommandsIrcProxy(ReplyIrcProxy):
                     if not msgs:
                         return
                     response = msgs.pop()
-                    if msgs:
-                        if len(msgs) == 1:
-                            more = _('more message')
-                        else:
-                            more = _('more messages')
-                        n = ircutils.bold('(%i %s)' % (len(msgs), more))
-                        response = '%s %s' % (response, n)
                     prefix = msg.prefix
                     if self.to and ircutils.isNick(self.to):
                         try:
@@ -1000,14 +1021,8 @@ class NestedCommandsIrcProxy(ReplyIrcProxy):
                     public = bool(self.msg.channel)
                     private = self.private or not public
                     self._mores[msg.nick] = (private, msgs)
-                    m = _makeReply(self, msg, response, to=self.to,
-                                  action=self.action,
-                                  notice=self.notice,
-                                  private=self.private,
-                                  prefixNick=self.prefixNick,
-                                  stripCtcp=stripCtcp)
-                    sendMsg(m)
-                    return m
+                    sendMsg(response)
+                    return response
             finally:
                 self._resetReplyAttributes()
         else:
@@ -1403,14 +1418,15 @@ class PluginMixin(BasePlugin, irclib.IrcCallback):
                 noIgnore = self.noIgnore(irc, msg)
             else:
                 noIgnore = self.noIgnore
-            if noIgnore or \
-               not ircdb.checkIgnored(msg.prefix, msg.channel) or \
-               not ircutils.isUserHostmask(msg.prefix):  # Some services impl.
+            if (noIgnore or
+               not msg.prefix or  # simulated echo message
+               not ircdb.checkIgnored(msg.prefix, msg.channel) or
+               not ircutils.isUserHostmask(msg.prefix)):  # Some services impl.
                 self.__parent.__call__(irc, msg)
         else:
             self.__parent.__call__(irc, msg)
 
-    def registryValue(self, name, channel=None, network=None, value=True):
+    def registryValue(self, name, channel=None, network=None, *, value=True):
         if isinstance(network, bool):
             # Network-unaware plugin that uses 'value' as a positional
             # argument.

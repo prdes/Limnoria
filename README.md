@@ -13,14 +13,14 @@ Master branch: [![Build Status (master branch)](https://travis-ci.org/ProgVal/Li
 
 Testing branch: [![Build Status (testing branch)](https://travis-ci.org/ProgVal/Limnoria.png?branch=testing)](https://travis-ci.org/ProgVal/Limnoria)
 
-Limnoria supports CPython 3.4, 3.5, 3.6, 3.7, nightly;
+Limnoria supports CPython 3.4, 3.5, 3.6, 3.7, 3.8, nightly;
 and Pypy 3.
 
 # Support
 
 ## Documentation
 
-If this is your first install, there is an [install guide](http://doc.supybot.aperio.fr/en/latest/use/install.html).
+If this is your first install, there is an [install guide](https://docs.limnoria.net/en/latest/use/install.html).
 You will probably be pointed to it if you ask on IRC how to install
 Limnoria.
 TL;DR version:
@@ -32,11 +32,11 @@ pip3 install --user limnoria
 supybot-wizard
 ```
 
-There is extensive documentation at [doc.supybot.aperio.fr] and at
+There is extensive documentation at [docs.limnoria.net] and at
 [Gribble wiki]. We took the time to write it; you should take the time to
 read it.
 
-[doc.supybot.aperio.fr]:http://doc.supybot.aperio.fr/
+[docs.limnoria.net]:https://docs.limnoria.net/
 [Gribble wiki]:https://sourceforge.net/p/gribble/wiki/Main_Page/
 
 ## IRC channels
