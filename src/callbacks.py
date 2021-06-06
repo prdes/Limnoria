@@ -434,6 +434,62 @@ class RichReplyMethods(object):
         self.noLengthCheck = None
         self.prefixNick = self._defaultPrefixNick(self.msg)
 
+    def _finalizeReplyAttributes(self,
+            prefixNick=None, private=None,
+            notice=None, to=None, action=None, error=False):
+        def isPublic(s):
+            return self.isChannel(self.stripChannelPrefix(s))
+
+        if to is not None:
+            self.to = to
+
+        target = self._getTarget()  # Temporary target, to get the config
+
+        if isPublic(target):
+            channel = self.stripChannelPrefix(target)
+        else:
+            channel = None
+
+        if private is not None:
+            self.private = self.private or private
+        if self.private is None:
+            self.private = conf.get(conf.supybot.reply.inPrivate,
+                channel=channel, network=self.network)
+
+        if self.private or not isPublic(target):
+            if conf.supybot.reply.withNoticeWhenPrivate():
+                self.notice = True
+        if notice is not None:
+            self.notice = self.notice or notice
+        if self.notice is None:
+            self.notice = conf.get(conf.supybot.reply.withNotice,
+                channel=channel, network=self.network)
+
+        if prefixNick is not None:
+            self.prefixNick = prefixNick
+        if self.prefixNick is None:
+            self.prefixNick = conf.get(conf.supybot.reply.withNickPrefix,
+                channel=channel, network=self.network)
+
+        if action is not None:
+            print('setting action', self.action, action)
+            self.action = self.action or action
+            if action:
+                self.prefixNick = False
+                self.noLengthCheck = True
+
+        if self.private:
+            self.prefixNick = False
+
+        if self.action:
+            self.prefixNick = False
+
+        if error:
+            self.notice =conf.get(conf.supybot.reply.error.withNotice,
+                channel=channel, network=self.network) or self.notice
+            self.private=conf.get(conf.supybot.reply.error.inPrivate,
+                channel=channel, network=self.network) or self.private
+
     def _getTarget(self, to=None):
         """Compute the target according to self.to, the provided to,
         and self.private, and return it. Mainly used by reply methods."""
@@ -444,9 +500,9 @@ class RichReplyMethods(object):
         if to is not None:
             self.to = self.to or to
         if self.private or self.msg.channel is None:
-            target = self.msg.nick
+            target = self.to or self.msg.nick
         else:
-            target = self.to or self.msg.args[0]
+            target = self.msg.args[0]
         return target
 
     def replies(self, L, prefixer=None, joiner=None,
@@ -652,79 +708,49 @@ class ReplyIrcProxy(RichReplyMethods):
     def __getattr__(self, attr):
         return getattr(self.irc, attr)
 
-    def _makeReply(self, s, msg=None,
-                  prefixNick=None, private=None,
-                  notice=None, to=None, action=None, error=False,
-                  stripCtcp=True):
-        msg = msg or self.msg
-        msg.tag('repliedTo')
-        # Ok, let's make the target:
-        # XXX This isn't entirely right.  Consider to=#foo, private=True.
-        target = ircutils.replyTo(msg)
+    def _makeReply(self, s, msg=None, error=False, stripCtcp=True, **kwargs):
+        self.msg = msg or self.msg
+        self.msg.tag('repliedTo')
         def isPublic(s):
             return self.isChannel(self.stripChannelPrefix(s))
-        if to is not None and isPublic(to):
-            target = to
-        if isPublic(target):
-            channel = self.stripChannelPrefix(target)
-        else:
-            channel = None
-        if notice is None:
-            notice = conf.get(conf.supybot.reply.withNotice,
-                channel=channel, network=self.network)
-        if private is None:
-            private = conf.get(conf.supybot.reply.inPrivate,
-                channel=channel, network=self.network)
-        if prefixNick is None:
-            prefixNick = conf.get(conf.supybot.reply.withNickPrefix,
-                channel=channel, network=self.network)
+
+        self._finalizeReplyAttributes(error=error, **kwargs)
+
+        target = self._getTarget()
+
+        to = self.to or self.msg.nick
+
         if error:
-            notice =conf.get(conf.supybot.reply.error.withNotice,
-                channel=channel, network=self.network) or notice
-            private=conf.get(conf.supybot.reply.error.inPrivate,
-                channel=channel, network=self.network) or private
             s = _('Error: ') + s
-        if private:
-            prefixNick = False
-            if to is None:
-                target = msg.nick
-            else:
-                target = to
-        if action:
-            prefixNick = False
-        if to is None:
-            to = msg.nick
+
         if stripCtcp:
             s = s.strip('\x01')
         # Ok, now let's make the payload:
         s = ircutils.safeArgument(s)
         if not s and not action:
             s = _('Error: I tried to send you an empty message.')
-        if prefixNick and isPublic(target):
+        if self.prefixNick and isPublic(target):
             # Let's may sure we don't do, "#channel: foo.".
             if not isPublic(to):
                 s = '%s: %s' % (to, s)
-        if not isPublic(target):
-            if conf.supybot.reply.withNoticeWhenPrivate():
-                notice = True
         # And now, let's decide whether it's a PRIVMSG or a NOTICE.
         msgmaker = ircmsgs.privmsg
-        if notice:
+        if self.notice:
             msgmaker = ircmsgs.notice
         # We don't use elif here because actions can't be sent as NOTICEs.
-        if action:
+        if self.action:
             msgmaker = ircmsgs.action
         # Finally, we'll return the actual message.
         ret = msgmaker(target, s)
-        ret.tag('inReplyTo', msg)
-        if 'msgid' in msg.server_tags \
+        ret.tag('inReplyTo', self.msg)
+        if 'msgid' in self.msg.server_tags \
                 and conf.supybot.protocols.irc.experimentalExtensions() \
                 and 'message-tags' in self.state.capabilities_ack:
             # In theory, msgid being in server_tags implies message-tags was
             # negotiated, but the +reply spec requires it explicitly. Plus, there's
             # no harm in doing this extra check, in case a plugin is replying
             # across network (as it may happen with '@network command').
-            ret.server_tags['+draft/reply'] = msg.server_tags['msgid']
+            ret.server_tags['+draft/reply'] = self.msg.server_tags['msgid']
         return ret
 
     def _makeErrorReply(self, s, msg=None, **kwargs):
@@ -1190,17 +1216,7 @@ class NestedCommandsIrcProxy(ReplyIrcProxy):
         self.repliedTo = True
         if msg is None:
             msg = self.msg
-        if prefixNick is not None:
-            self.prefixNick = prefixNick
-        if action is not None:
-            self.action = self.action or action
-            if action:
-                self.prefixNick = False
-                self.noLengthCheck = True
-        if notice is not None:
-            self.notice = self.notice or notice
-        if private is not None:
-            self.private = self.private or private
+
         target = self._getTarget(to)
         # action=True implies noLengthCheck=True and prefixNick=False
         self.noLengthCheck=noLengthCheck or self.noLengthCheck or self.action
