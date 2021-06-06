@@ -288,48 +288,55 @@ class FunctionsTestCase(SupyTestCase):
         nonChannelMsg = ircmsgs.privmsg('supybot', 'bar baz', prefix=prefix)
         irc._tagMsg(channelMsg)
         irc._tagMsg(nonChannelMsg)
+        ircChannel = callbacks.ReplyIrcProxy(irc, channelMsg)
+        ircNonChannel = callbacks.ReplyIrcProxy(irc, nonChannelMsg)
         self.assertEqual(ircmsgs.notice(nonChannelMsg.nick, 'foo'),
-                         callbacks._makeReply(irc, channelMsg, 'foo',
-                                              private=True))
+                         ircChannel._makeReply('foo',
+                                               private=True))
         self.assertEqual(ircmsgs.notice(nonChannelMsg.nick, 'foo'),
-                         callbacks._makeReply(irc, nonChannelMsg, 'foo'))
+                         ircNonChannel._makeReply('foo'))
         self.assertEqual(ircmsgs.privmsg(channelMsg.args[0],
                                          '%s: foo' % channelMsg.nick),
-                         callbacks._makeReply(irc, channelMsg, 'foo'))
+                         ircChannel._makeReply('foo'))
         self.assertEqual(ircmsgs.privmsg(channelMsg.args[0],
                                          'foo'),
-                         callbacks._makeReply(irc, channelMsg, 'foo',
-                                              prefixNick=False))
+                         ircChannel._makeReply('foo',
+                                               prefixNick=False))
         self.assertEqual(ircmsgs.notice(nonChannelMsg.nick, 'foo'),
-                         callbacks._makeReply(irc, channelMsg, 'foo',
-                                              notice=True, private=True))
+                         ircChannel._makeReply('foo',
+                                               notice=True, private=True))
 
     def testReplyStatusmsg(self):
         irc = getTestIrc()
         prefix = 'foo!bar@baz'
         msg = ircmsgs.privmsg('+#foo', 'bar baz', prefix=prefix)
         irc._tagMsg(msg)
+        channelMsg = ircmsgs.privmsg('#foo', 'bar baz', prefix=prefix)
+
 
         # No statusmsg set, so understood as being a private message, so
         # private reply
+        replyIrc = callbacks.ReplyIrcProxy(irc, msg)
         self.assertEqual(ircmsgs.notice(msg.nick, 'foo'),
-                         callbacks._makeReply(irc, msg, 'foo'))
+                         replyIrc._makeReply('foo'))
 
         irc.state.supported['statusmsg'] = '+'
         msg = ircmsgs.privmsg('+#foo', 'bar baz', prefix=prefix)
         irc._tagMsg(msg)
+        replyIrc = callbacks.ReplyIrcProxy(irc, msg)
         self.assertEqual(ircmsgs.privmsg('+#foo', '%s: foo' % msg.nick),
-                         callbacks._makeReply(irc, msg, 'foo'))
+                         replyIrc._makeReply('foo'))
 
     def testReplyTo(self):
         irc = getTestIrc()
         prefix = 'foo!bar@baz'
         msg = ircmsgs.privmsg('#foo', 'bar baz', prefix=prefix)
         irc._tagMsg(msg)
-        self.assertEqual(callbacks._makeReply(irc, msg, 'blah', to='blah'),
+        replyIrc = callbacks.ReplyIrcProxy(irc, msg)
+        self.assertEqual(replyIrc._makeReply('blah', to='blah'),
                          ircmsgs.privmsg('#foo', 'blah: blah'))
-        self.assertEqual(callbacks._makeReply(irc, msg, 'blah', to='blah',
-                                              private=True),
+        self.assertEqual(replyIrc._makeReply('blah', to='blah',
+                                             private=True),
                          ircmsgs.notice('blah', 'blah'))
 
     def testTokenize(self):

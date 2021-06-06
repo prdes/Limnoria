@@ -177,94 +177,12 @@ def canonicalName(command, preserve_spaces=False):
     return ''.join([x for x in command if x not in special]).lower() + reAppend
 
 def reply(*args, **kwargs):
-    warnings.warn('callbacks.reply is deprecated. Use irc.reply instead.',
-                  DeprecationWarning)
-    return _makeReply(dynamic.irc, *args, **kwargs)
-
-def _makeReply(irc, msg, s,
-              prefixNick=None, private=None,
-              notice=None, to=None, action=None, error=False,
-              stripCtcp=True):
-    msg.tag('repliedTo')
-    # Ok, let's make the target:
-    # XXX This isn't entirely right.  Consider to=#foo, private=True.
-    target = ircutils.replyTo(msg)
-    def isPublic(s):
-        return irc.isChannel(irc.stripChannelPrefix(s))
-    if to is not None and isPublic(to):
-        target = to
-    if isPublic(target):
-        channel = irc.stripChannelPrefix(target)
-    else:
-        channel = None
-    if notice is None:
-        notice = conf.get(conf.supybot.reply.withNotice,
-            channel=channel, network=irc.network)
-    if private is None:
-        private = conf.get(conf.supybot.reply.inPrivate,
-            channel=channel, network=irc.network)
-    if prefixNick is None:
-        prefixNick = conf.get(conf.supybot.reply.withNickPrefix,
-            channel=channel, network=irc.network)
-    if error:
-        notice =conf.get(conf.supybot.reply.error.withNotice,
-            channel=channel, network=irc.network) or notice
-        private=conf.get(conf.supybot.reply.error.inPrivate,
-            channel=channel, network=irc.network) or private
-        s = _('Error: ') + s
-    if private:
-        prefixNick = False
-        if to is None:
-            target = msg.nick
-        else:
-            target = to
-    if action:
-        prefixNick = False
-    if to is None:
-        to = msg.nick
-    if stripCtcp:
-        s = s.strip('\x01')
-    # Ok, now let's make the payload:
-    s = ircutils.safeArgument(s)
-    if not s and not action:
-        s = _('Error: I tried to send you an empty message.')
-    if prefixNick and isPublic(target):
-        # Let's may sure we don't do, "#channel: foo.".
-        if not isPublic(to):
-            s = '%s: %s' % (to, s)
-    if not isPublic(target):
-        if conf.supybot.reply.withNoticeWhenPrivate():
-            notice = True
-    # And now, let's decide whether it's a PRIVMSG or a NOTICE.
-    msgmaker = ircmsgs.privmsg
-    if notice:
-        msgmaker = ircmsgs.notice
-    # We don't use elif here because actions can't be sent as NOTICEs.
-    if action:
-        msgmaker = ircmsgs.action
-    # Finally, we'll return the actual message.
-    ret = msgmaker(target, s)
-    ret.tag('inReplyTo', msg)
-    if 'msgid' in msg.server_tags \
-            and conf.supybot.protocols.irc.experimentalExtensions() \
-            and 'message-tags' in irc.state.capabilities_ack:
-        # In theory, msgid being in server_tags implies message-tags was
-        # negotiated, but the +reply spec requires it explicitly. Plus, there's
-        # no harm in doing this extra check, in case a plugin is replying
-        # across network (as it may happen with '@network command').
-        ret.server_tags['+draft/reply'] = msg.server_tags['msgid']
-    return ret
+    raise Exception(
+        'callbacks.reply no longer exists. Use irc.error instead.')
 
 def error(*args, **kwargs):
-    warnings.warn('callbacks.error is deprecated. Use irc.error instead.',
-                  DeprecationWarning)
-    return _makeErrorReply(dynamic.irc, *args, **kwargs)
-
-def _makeErrorReply(irc, msg, s, **kwargs):
-    """Makes an error reply to msg with the appropriate error payload."""
-    kwargs['error'] = True
-    msg.tag('isError')
-    return _makeReply(irc, msg, s, **kwargs)
+    raise Exception(
+        'callbacks.error no longer exists. Use irc.error instead.')
 
 def getHelp(method, name=None, doc=None):
     if name is None:
@@ -660,7 +578,7 @@ class ReplyIrcProxy(RichReplyMethods):
         if msg is None:
             msg = self.msg
         if s:
-            m = _makeErrorReply(self, msg, s, **kwargs)
+            m = self._makeErrorReply(s, msg=msg, **kwargs)
             self.irc.queueMsg(m)
             return m
 
@@ -721,6 +639,88 @@ class ReplyIrcProxy(RichReplyMethods):
     def __getattr__(self, attr):
         return getattr(self.irc, attr)
 
+    def _makeReply(self, s, msg=None,
+                  prefixNick=None, private=None,
+                  notice=None, to=None, action=None, error=False,
+                  stripCtcp=True):
+        msg = msg or self.msg
+        msg.tag('repliedTo')
+        # Ok, let's make the target:
+        # XXX This isn't entirely right.  Consider to=#foo, private=True.
+        target = ircutils.replyTo(msg)
+        def isPublic(s):
+            return self.isChannel(self.stripChannelPrefix(s))
+        if to is not None and isPublic(to):
+            target = to
+        if isPublic(target):
+            channel = self.stripChannelPrefix(target)
+        else:
+            channel = None
+        if notice is None:
+            notice = conf.get(conf.supybot.reply.withNotice,
+                channel=channel, network=self.network)
+        if private is None:
+            private = conf.get(conf.supybot.reply.inPrivate,
+                channel=channel, network=self.network)
+        if prefixNick is None:
+            prefixNick = conf.get(conf.supybot.reply.withNickPrefix,
+                channel=channel, network=self.network)
+        if error:
+            notice =conf.get(conf.supybot.reply.error.withNotice,
+                channel=channel, network=self.network) or notice
+            private=conf.get(conf.supybot.reply.error.inPrivate,
+                channel=channel, network=self.network) or private
+            s = _('Error: ') + s
+        if private:
+            prefixNick = False
+            if to is None:
+                target = msg.nick
+            else:
+                target = to
+        if action:
+            prefixNick = False
+        if to is None:
+            to = msg.nick
+        if stripCtcp:
+            s = s.strip('\x01')
+        # Ok, now let's make the payload:
+        s = ircutils.safeArgument(s)
+        if not s and not action:
+            s = _('Error: I tried to send you an empty message.')
+        if prefixNick and isPublic(target):
+            # Let's may sure we don't do, "#channel: foo.".
+            if not isPublic(to):
+                s = '%s: %s' % (to, s)
+        if not isPublic(target):
+            if conf.supybot.reply.withNoticeWhenPrivate():
+                notice = True
+        # And now, let's decide whether it's a PRIVMSG or a NOTICE.
+        msgmaker = ircmsgs.privmsg
+        if notice:
+            msgmaker = ircmsgs.notice
+        # We don't use elif here because actions can't be sent as NOTICEs.
+        if action:
+            msgmaker = ircmsgs.action
+        # Finally, we'll return the actual message.
+        ret = msgmaker(target, s)
+        ret.tag('inReplyTo', msg)
+        if 'msgid' in msg.server_tags \
+                and conf.supybot.protocols.irc.experimentalExtensions() \
+                and 'message-tags' in self.state.capabilities_ack:
+            # In theory, msgid being in server_tags implies message-tags was
+            # negotiated, but the +reply spec requires it explicitly. Plus, there's
+            # no harm in doing this extra check, in case a plugin is replying
+            # across network (as it may happen with '@network command').
+            ret.server_tags['+draft/reply'] = msg.server_tags['msgid']
+        return ret
+
+    def _makeErrorReply(self, s, msg=None, **kwargs):
+        """Makes an error reply to msg with the appropriate error payload."""
+        kwargs['error'] = True
+        msg.tag('isError')
+        return self._makeReply(s, msg=msg, **kwargs)
+
+
     def _replyOverhead(self, target, targetNick, prefixNick):
         """Returns the number of bytes added to a PRIVMSG payload, either by
         Limnoria itself or by the server.
@@ -752,7 +752,7 @@ class ReplyIrcProxy(RichReplyMethods):
         elif noLengthCheck:
             # noLengthCheck only matters to NestedCommandsIrcProxy, so
             # it's not used here.  Just in case you were wondering.
-            m = _makeReply(self, msg, s, **kwargs)
+            m = self._makeReply(s, msg=msg, **kwargs)
             sendMsg(m)
             return m
         else:
@@ -777,7 +777,7 @@ class ReplyIrcProxy(RichReplyMethods):
                 # action implies noLengthCheck, which has already been
                 # handled.  Let's stick an assert in here just in case.
                 assert not kwargs.get('action')
-                m = _makeReply(self, msg, s, **kwargs)
+                m = self._makeReply(s, msg=msg, **kwargs)
                 sendMsg(m)
                 return m
             # The '(XX more messages)' may have not the same
@@ -846,9 +846,9 @@ class ReplyIrcProxy(RichReplyMethods):
                 if is_instant and not is_first:
                     d = kwargs.copy()
                     d['prefixNick'] = False
-                    msgs.append(_makeReply(self, msg, chunk, **d))
+                    msgs.append(self._makeReply(chunk, msg=msg, **d))
                 else:
-                    msgs.append(_makeReply(self, msg, chunk, **kwargs))
+                    msgs.append(self._makeReply(chunk, msg=msg, **kwargs))
 
             instant_messages = []
 
@@ -1275,7 +1275,7 @@ class NestedCommandsIrcProxy(ReplyIrcProxy):
         if not isinstance(self.irc, irclib.Irc):
             return self.irc.error(s, **kwargs)
         elif s:
-            m = _makeErrorReply(self, self.msg, s, **kwargs)
+            m = self._makeErrorReply(s, **kwargs)
             self.irc.queueMsg(m)
             return m
 
