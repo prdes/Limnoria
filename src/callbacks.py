@@ -383,6 +383,12 @@ class RichReplyMethods(object):
     """This is a mixin so these replies need only be defined once.  It operates
     under several assumptions, including the fact that 'self' is an Irc object
     of some sort and there is a self.msg that is an IrcMsg."""
+
+    def __init__(self, irc, msg):
+        self.irc = irc
+        self.msg = msg
+        self._resetReplyAttributes()
+
     def __makeReply(self, prefix, s):
         if s:
             s = '%s  %s' % (prefix, s)
@@ -419,6 +425,14 @@ class RichReplyMethods(object):
                 v = self._getConfig(conf.supybot.replies.errorOwner)
         s = self.__makeReply(v, s)
         return self.reply(s, **kwargs)
+
+    def _resetReplyAttributes(self):
+        self.to = None
+        self.action = None
+        self.notice = None
+        self.private = None
+        self.noLengthCheck = None
+        self.prefixNick = self._defaultPrefixNick(self.msg)
 
     def _getTarget(self, to=None):
         """Compute the target according to self.to, the provided to,
@@ -550,8 +564,7 @@ class ReplyIrcProxy(RichReplyMethods):
     based on those two)."""
     _mores = ircutils.IrcDict()
     def __init__(self, irc, msg):
-        self.irc = irc
-        self.msg = msg
+        super(ReplyIrcProxy, self).__init__(irc, msg)
         self.getRealIrc()._setMsgChannel(self.msg)
 
     def getRealIrc(self):
@@ -982,7 +995,6 @@ class NestedCommandsIrcProxy(ReplyIrcProxy):
         # work, but we're being careful.
         self.args = copy.deepcopy(args)
         self.counter = 0
-        self._resetReplyAttributes()
         if not args:
             self.finalEvaled = True
             self._callInvalidCommands()
@@ -996,14 +1008,6 @@ class NestedCommandsIrcProxy(ReplyIrcProxy):
 
     def __hash__(self):
         return hash(self.getRealIrc())
-
-    def _resetReplyAttributes(self):
-        self.to = None
-        self.action = None
-        self.notice = None
-        self.private = None
-        self.noLengthCheck = None
-        self.prefixNick = self._defaultPrefixNick(self.msg)
 
     def evalArgs(self, withClass=None):
         while self.counter < len(self.args):
