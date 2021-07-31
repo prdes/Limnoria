@@ -15,18 +15,12 @@ jobs:
         runs-on: [ubuntu-latest]
         exclude:
           # Some of the dependencies don't work on old Python versions
-          - python-version: "3.4"
-            with-opt-deps: true
           - python-version: "3.5"
             with-opt-deps: true
           - python-version: "3.6"
             with-opt-deps: true
           - python-version: "pypy-3.6"
             with-opt-deps: true
-        include:
-          - python-version: "3.4"
-            with-opt-deps: false
-            runs-on: ubuntu-18.04
 
     steps:
       - uses: actions/checkout@v2
