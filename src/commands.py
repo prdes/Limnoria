@@ -44,6 +44,11 @@ try:
 except ImportError: # Windows!
     resource = None
 
+try:
+    import pypyjit
+except ImportError:
+    pypyjit = None
+
 from . import callbacks, conf, ircdb, ircmsgs, ircutils, log, \
         utils, world
 from .utils import minisix
@@ -117,6 +122,8 @@ def process(f, *args, **kwargs):
         raise
     def newf(f, q, *args, **kwargs):
         if resource:
+            if pypyjit is not None:
+                pypyjit.set_param('off')
             rsrc = resource.RLIMIT_DATA
             (soft, hard) = resource.getrlimit(rsrc)
             soft = _rlimit_min(soft, heap_size)
